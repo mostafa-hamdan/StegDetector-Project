@@ -17,6 +17,92 @@ from core.stego_video import embed_lsb_video, extract_lsb_video
 from core.utils_av import extract_audio_from_video, ensure_dir
 
 
+# Practical limits for the public Streamlit demo (Cloud)
+MAX_FILE_BYTES = 50 * 1024 * 1024       # 50 MB
+MAX_AUDIO_MESSAGE_CHARS = 5000          # safe upper bound for audio messages
+MAX_VIDEO_MESSAGE_CHARS = 20000         # safe upper bound for video messages
+
+
+# Global CSS tweaks for a slightly softer UI
+st.markdown(
+    """
+    <style>
+    /* Soften the Quick help expander */
+    div[data-testid="stExpander"] {
+        border-radius: 12px !important;
+        border: 1px solid #e5e7eb !important;
+        background-color: #fafafa !important;
+    }
+    div[data-testid="stExpander"] > details {
+        padding: 0.25rem 0.75rem !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ---------- UI/UX HELPERS ----------
+
+def inject_global_css():
+    """Inject custom CSS for a polished look."""
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background-color: #f5f7fb;
+        }
+        [data-testid="stSidebar"] {
+            background-color: #ffffff;
+            border-right: 1px solid #e5e7eb;
+        }
+        section.main > div {
+            padding-top: 1rem;
+        }
+        .stButton > button {
+            border-radius: 999px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def inject_global_styles():
+    """Make text areas more visible with stronger borders and subtle background."""
+    st.markdown(
+        """
+        <style>
+        /* All multi-line text areas */
+        .stTextArea textarea {
+            border: 2px solid #2563eb !important;   /* blue border */
+            border-radius: 8px !important;
+            background-color: #f9fafb !important;   /* very light gray */
+            font-size: 0.95rem !important;
+        }
+
+        /* Labels above text areas */
+        .stTextArea label {
+            font-weight: 600 !important;
+        }
+
+        /* Code blocks for recovered messages */
+        [data-testid="stCodeBlock"] {
+            border: 2px solid #2563eb !important;
+            border-radius: 8px !important;
+            background-color: #f9fafb !important;
+            padding: 0.5rem 0.75rem !important;
+        }
+        [data-testid="stCodeBlock"] pre {
+            color: #111827 !important;
+            font-size: 0.95rem !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # ---------- FILE TYPE HELPERS ----------
 
 def classify_file_type(filename: str) -> Tuple[Optional[str], str]:
@@ -61,6 +147,15 @@ def update_shared_file(uploaded_file) -> None:
     all tabs can reuse it.
     """
     if uploaded_file is None:
+        return
+
+    # Reject very large files for the online demo
+    if getattr(uploaded_file, "size", None) is not None and uploaded_file.size > MAX_FILE_BYTES:
+        mb = MAX_FILE_BYTES / (1024 * 1024)
+        st.error(
+            f"File is too large for the online demo (limit {mb:.0f} MB). "
+            "Please use a shorter or lower-resolution audio/video file."
+        )
         return
 
     kind, suffix = classify_file_type(uploaded_file.name)
@@ -290,8 +385,11 @@ def show_auth_page():
 
 def show_analyze_tab():
     st.header("Analyze File for Steganography")
-
-    show_shared_file_info()
+    st.write(
+        "Upload an audio or video file and run our steganalysis methods to estimate "
+        "whether it is likely to contain hidden data."
+    )
+    st.info("Tip: the uploaded file is shared with the *Embed* and *Extract* tabs.")
 
     uploaded = st.file_uploader(
         "Upload or replace an audio/video file to analyze",
@@ -301,7 +399,9 @@ def show_analyze_tab():
     if uploaded is not None:
         update_shared_file(uploaded)
 
-    if st.button("Run analysis"):
+    show_shared_file_info()
+
+    if st.button("Run analysis", use_container_width=True):
         if not has_shared_file():
             st.error("Please upload an audio or video file first.")
             return
@@ -335,8 +435,10 @@ def show_analyze_tab():
 
 def show_embed_tab():
     st.header("Embed a Secret Message")
-
-    show_shared_file_info()
+    st.write(
+        "Choose a cover audio or video file and hide a secret text message using LSB "
+        "steganography. You can later test it with the **Analyze** and **Extract** tabs."
+    )
 
     uploaded = st.file_uploader(
         "Upload or replace a COVER file (audio or video)",
@@ -345,6 +447,8 @@ def show_embed_tab():
     )
     if uploaded is not None:
         update_shared_file(uploaded)
+
+    show_shared_file_info()
 
     kind = st.session_state.get("shared_file_kind")
 
@@ -367,21 +471,41 @@ def show_embed_tab():
 
     if kind == "audio" or video_mode == "Video frames only" or video_mode == "Audio track only":
         # Single message for audio or single video/audio mode
-        message = st.text_area("Secret message to hide")
+        message = st.text_area(
+            "Secret message to hide",
+            placeholder="Type the secret text you want to embed inside the audio/video file...",
+            height=150,
+            key="embed_single_message",
+        )
     elif video_mode == "Both frames + audio":
         # Two message mode with option to use same message
         use_same_message = st.checkbox("Use the same message for both video and audio frames", value=True, key="use_same_message_checkbox")
         
         if use_same_message:
-            message = st.text_area("Secret message to hide (for both video frames and audio track)")
+            message = st.text_area(
+                "Secret message to hide (for both video frames and audio track)",
+                placeholder="This same message will be embedded into both frames and audio.",
+                height=150,
+                key="embed_both_same",
+            )
         else:
             col1, col2 = st.columns(2)
             with col1:
-                msg_video = st.text_area("Secret message to hide in VIDEO FRAMES")
+                msg_video = st.text_area(
+                    "Secret message to hide in VIDEO FRAMES",
+                    placeholder="Message for video frames...",
+                    height=150,
+                    key="embed_video_frames_msg",
+                )
             with col2:
-                msg_audio = st.text_area("Secret message to hide in AUDIO TRACK")
+                msg_audio = st.text_area(
+                    "Secret message to hide in AUDIO TRACK",
+                    placeholder="Message for audio track...",
+                    height=150,
+                    key="embed_audio_track_msg",
+                )
 
-    if st.button("Embed message"):
+    if st.button("Embed message", use_container_width=True):
         # Validate messages
         if kind == "audio" or video_mode in ["Video frames only", "Audio track only"]:
             if not message:
@@ -400,6 +524,42 @@ def show_embed_tab():
                 if not msg_audio or msg_audio.strip() == "":
                     st.error("Please enter a message for audio track.")
                     return
+
+        # NEW: practical message-length limits for the online demo
+        if kind == "audio":
+            if len(message) > MAX_AUDIO_MESSAGE_CHARS:
+                st.error(
+                    f"Message is too long for this audio in the online demo. "
+                    f"Please keep audio messages under {MAX_AUDIO_MESSAGE_CHARS} characters."
+                )
+                return
+        elif kind == "video":
+            if video_mode in ["Video frames only", "Audio track only"]:
+                if len(message) > MAX_VIDEO_MESSAGE_CHARS:
+                    st.error(
+                        f"Message is too long for this video in the online demo. "
+                        f"Please keep each video message under {MAX_VIDEO_MESSAGE_CHARS} characters."
+                    )
+                    return
+            elif video_mode == "Both frames + audio":
+                use_same_message = st.session_state.get(
+                    "embed_both_same_message",
+                    st.session_state.get("use_same_message_checkbox", True)
+                )
+                if use_same_message:
+                    if len(message) > MAX_VIDEO_MESSAGE_CHARS:
+                        st.error(
+                            f"Message is too long for this video in the online demo. "
+                            f"Please keep each video message under {MAX_VIDEO_MESSAGE_CHARS} characters."
+                        )
+                        return
+                else:
+                    if len(msg_video) > MAX_VIDEO_MESSAGE_CHARS or len(msg_audio) > MAX_VIDEO_MESSAGE_CHARS:
+                        st.error(
+                            f"One of the messages is too long for this video in the online demo. "
+                            f"Please keep each video message under {MAX_VIDEO_MESSAGE_CHARS} characters."
+                        )
+                        return
 
         temp_path, kind, suffix = make_temp_file_from_shared()
         if temp_path is None:
@@ -429,26 +589,57 @@ def show_embed_tab():
         try:
             if kind == "audio":
                 st.info("Embedding into AUDIO samples")
-                embed_lsb_audio(temp_path, stego_path, message)
+                try:
+                    embed_lsb_audio(temp_path, stego_path, message)
+                except ValueError as e:
+                    st.error(str(e))
+                    return
+                except Exception as e:
+                    st.error(f"Error during embedding: {e}")
+                    return
             elif kind == "video":
                 if video_mode == "Video frames only":
                     st.info("Embedding into VIDEO FRAMES only.")
-                    embed_video_frames_only(temp_path, stego_path, message)
+                    try:
+                        embed_video_frames_only(temp_path, stego_path, message)
+                    except ValueError as e:
+                        st.error(str(e))
+                        return
+                    except Exception as e:
+                        st.error(f"Error during embedding: {e}")
+                        return
                 elif video_mode == "Audio track only":
                     st.info("Embedding into AUDIO TRACK only.")
-                    embed_video_audio_only(temp_path, stego_path, message)
+                    try:
+                        embed_video_audio_only(temp_path, stego_path, message)
+                    except ValueError as e:
+                        st.error(str(e))
+                        return
+                    except Exception as e:
+                        st.error(f"Error during embedding: {e}")
+                        return
                 else:  # both
                     st.info("Embedding into BOTH video frames and audio track.")
                     use_same_msg = st.session_state.get("use_same_message_checkbox", True)
-                    if use_same_msg:
-                        embed_video_both(temp_path, stego_path, message, message)
-                    else:
-                        embed_video_both(temp_path, stego_path, msg_video, msg_audio)
+                    try:
+                        if use_same_msg:
+                            embed_video_both(temp_path, stego_path, message, message)
+                        else:
+                            embed_video_both(temp_path, stego_path, msg_video, msg_audio)
+                    except ValueError as e:
+                        st.error(str(e))
+                        return
+                    except Exception as e:
+                        st.error(f"Error during embedding: {e}")
+                        return
             else:
                 st.error("Unsupported file type.")
                 return
 
             st.success("Message embedded successfully.")
+            # Small visual feedback for the user
+            st.balloons()
+
             download_name = f"{base_stem}_stego{out_ext}"
             with open(stego_path, "rb") as f:
                 stego_bytes = f.read()
@@ -469,8 +660,10 @@ def show_embed_tab():
 
 def show_extract_tab():
     st.header("Extract a Secret Message")
-
-    show_shared_file_info()
+    st.write(
+        "Upload a stego audio or video file to recover any hidden text message from "
+        "its samples or frames."
+    )
 
     uploaded = st.file_uploader(
         "Upload or replace a suspected STEGO file (audio or video)",
@@ -479,6 +672,8 @@ def show_extract_tab():
     )
     if uploaded is not None:
         update_shared_file(uploaded)
+
+    show_shared_file_info()
 
     kind = st.session_state.get("shared_file_kind")
 
@@ -490,7 +685,7 @@ def show_extract_tab():
             key="extract_video_mode",
         )
 
-    if st.button("Extract message"):
+    if st.button("Extract message", use_container_width=True):
         if not has_shared_file():
             st.error("Please upload a stego file first.")
             return
@@ -505,7 +700,7 @@ def show_extract_tab():
                 st.info("Detected AUDIO file – extracting from audio samples.")
                 msg = extract_lsb_audio(temp_path)
                 st.subheader("Recovered message")
-                st.code(msg)
+                st.code(msg or "", language="text")
             elif kind == "video":
                 st.info("Detected VIDEO file.")
                 # Default when None: auto
@@ -518,17 +713,17 @@ def show_extract_tab():
                     msg_frames = extract_lsb_video(temp_path)
                     msg_audio = extract_message_from_video_audio(temp_path)
                     st.subheader("Recovered from VIDEO FRAMES")
-                    st.code(msg_frames)
+                    st.code(msg_frames or "", language="text")
                     st.subheader("Recovered from AUDIO TRACK")
-                    st.code(msg_audio)
+                    st.code(msg_audio or "", language="text")
                 elif mode_label.startswith("Video frames"):
                     msg_frames = extract_lsb_video(temp_path)
                     st.subheader("Recovered from VIDEO FRAMES")
-                    st.code(msg_frames)
+                    st.code(msg_frames or "", language="text")
                 else:  # audio track only
                     msg_audio = extract_message_from_video_audio(temp_path)
                     st.subheader("Recovered from AUDIO TRACK")
-                    st.code(msg_audio)
+                    st.code(msg_audio or "", language="text")
             else:
                 st.error("Unsupported file type.")
         except Exception as e:
@@ -542,14 +737,46 @@ def show_extract_tab():
 
 def show_main_app():
     st.title("StegDetector – Dashboard")
+    st.caption("Audio & video steganography toolkit")
+    st.markdown(
+        "Use this dashboard to **analyze**, **embed**, and **extract** hidden messages "
+        "from audio and video files. Choose a tab below to get started."
+    )
+    st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
 
-    user = st.session_state.get("logged_in_user")
-    st.sidebar.write(f"Logged in as: **{user}**")
-    if st.sidebar.button("Log out"):
-        st.session_state["logged_in_user"] = None
-        st.rerun()
+    user = st.session_state.get("logged_in_user") or "Unknown user"
 
-    tab_analyze, tab_embed, tab_extract = st.tabs(["Analyze", "Embed", "Extract"])
+    # ----- SIDEBAR LAYOUT -----
+    with st.sidebar:
+        st.markdown(
+            """
+            <h2 style="margin-bottom: 0.25rem;">StegDetector</h2>
+            <p style="font-size: 0.85rem; color: #6c757d; margin-top: 0;">Audio &amp; video steganography toolkit</p>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("---")
+        st.markdown(f"**Logged in as:** `{user}`")
+
+        # Separate, more "danger-looking" log out
+        if st.button("❌ Log out", key="logout_button"):
+            st.session_state["logged_in_user"] = None
+            st.rerun()
+
+        st.markdown("---")
+        with st.expander("ℹ️ Quick help", expanded=False):
+            st.write(
+                "- **Analyze**: upload a cover or stego file to check for hidden content.\n"
+                "- **Embed**: hide a secret message in audio or video using LSB.\n"
+                "- **Extract**: recover hidden messages from audio/video stego files.\n"
+                "- The same uploaded file is shared across all tabs."
+            )
+
+    # ----- MAIN TABS -----
+    tab_analyze, tab_embed, tab_extract = st.tabs(
+        ["🧪 Analyze", "🕵️ Embed", "🔍 Extract"]
+    )
 
     with tab_analyze:
         show_analyze_tab()
@@ -558,11 +785,17 @@ def show_main_app():
     with tab_extract:
         show_extract_tab()
 
+    # Small footer
+    st.markdown("---")
+    st.caption("StegDetector v1.0 · AUB EECE 632 Cryptography & Network Security project")
+
 
 # ---------- ENTRYPOINT ----------
 
 def main():
     st.set_page_config(page_title="StegDetector", layout="wide")
+    inject_global_styles()
+    inject_global_css()
     init_db()
     init_app_state()
 

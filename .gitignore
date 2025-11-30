@@ -22,3 +22,5 @@ StegDetector/training/
 *.mp4
 *.avi
 *.mov
+
+REPORT_CONTENT.txt

@@ -18,9 +18,12 @@ from core.utils_av import extract_audio_from_video, ensure_dir
 
 
 # Practical limits for the public Streamlit demo (Cloud)
-MAX_FILE_BYTES = 50 * 1024 * 1024       # 50 MB
+MAX_FILE_BYTES = 50 * 1024 * 1024       # 50 MB for analyze / embed
 MAX_AUDIO_MESSAGE_CHARS = 5000          # safe upper bound for audio messages
 MAX_VIDEO_MESSAGE_CHARS = 20000         # safe upper bound for video messages
+
+# Larger limit specifically for extraction tab
+MAX_EXTRACT_FILE_BYTES = 300 * 1024 * 1024  # 300 MB for Extract tab
 
 
 # Global CSS tweaks for a slightly softer UI
@@ -43,6 +46,34 @@ st.markdown(
 
 
 # ---------- UI/UX HELPERS ----------
+
+from shutil import which
+
+def has_ffmpeg() -> bool:
+    """Return True if ffmpeg is available on PATH."""
+    return which("ffmpeg") is not None
+
+def reset_app_state() -> None:
+    """Clear shared file and stego-related session keys without affecting login state."""
+    for key in (
+        "shared_file_bytes",
+        "shared_file_name",
+        "shared_file_kind",
+        "shared_file_suffix",
+        "stego_bytes",
+        "stego_filename",
+        "has_stego",
+        # include obvious temporary flags if present
+        "embed_single_message",
+        "embed_both_same",
+        "embed_video_frames_msg",
+        "embed_audio_track_msg",
+        "use_same_message_checkbox",
+        "embed_video_mode",
+        "extract_video_mode",
+    ):
+        if key in st.session_state:
+            st.session_state.pop(key, None)
 
 def inject_global_css():
     """Inject custom CSS for a polished look."""
@@ -141,17 +172,25 @@ def init_app_state():
         st.session_state.setdefault(k, v)
 
 
-def update_shared_file(uploaded_file) -> None:
+def update_shared_file(uploaded_file, max_bytes: int = MAX_FILE_BYTES) -> None:
     """
     Store the uploaded file (bytes + metadata) in session_state so that
     all tabs can reuse it.
+
+    max_bytes:
+        - default: MAX_FILE_BYTES (50 MB) for Analyze and Embed tabs
+        - Extract tab will explicitly override this to MAX_EXTRACT_FILE_BYTES (300 MB)
     """
     if uploaded_file is None:
         return
 
-    # Reject very large files for the online demo
-    if getattr(uploaded_file, "size", None) is not None and uploaded_file.size > MAX_FILE_BYTES:
-        mb = MAX_FILE_BYTES / (1024 * 1024)
+    # Reject very large files for the online demo, unless max_bytes is None
+    if (
+        max_bytes is not None
+        and getattr(uploaded_file, "size", None) is not None
+        and uploaded_file.size > max_bytes
+    ):
+        mb = max_bytes / (1024 * 1024)
         st.error(
             f"File is too large for the online demo (limit {mb:.0f} MB). "
             "Please use a shorter or lower-resolution audio/video file."
@@ -219,13 +258,11 @@ def _mux_video_and_audio(video_path: Path | str, audio_path: Path | str, output_
     - Video is copied (no re-encode) so VIDEO LSB stego survives.
     - Audio is stored lossless so AUDIO LSB stego survives.
     """
-    from shutil import which
-
     video_path = str(video_path)
     audio_path = str(audio_path)
     output_path = str(output_path)
 
-    if which("ffmpeg") is None:
+    if not has_ffmpeg():
         raise RuntimeError(
             "ffmpeg is required to mux video and audio but was not found in PATH."
         )
@@ -587,54 +624,64 @@ def show_embed_tab():
             stego_path = tmp.name
 
         try:
-            if kind == "audio":
-                st.info("Embedding into AUDIO samples")
-                try:
-                    embed_lsb_audio(temp_path, stego_path, message)
-                except ValueError as e:
-                    st.error(str(e))
+            with st.spinner("Embedding your secret message into the file. This may take several seconds for videos..."):
+                if kind == "audio":
+                    st.info("Embedding into AUDIO samples")
+                    try:
+                        embed_lsb_audio(temp_path, stego_path, message)
+                    except ValueError as e:
+                        st.error(str(e))
+                        return
+                    except Exception as e:
+                        st.error(f"Error during embedding: {e}")
+                        return
+                elif kind == "video":
+                    if video_mode == "Video frames only":
+                        if not has_ffmpeg():
+                            st.error("Video steganography requires ffmpeg, which was not found on this system. Please install ffmpeg or use audio-only files.")
+                            return
+                        st.info("Embedding into VIDEO FRAMES only.")
+                        try:
+                            embed_video_frames_only(temp_path, stego_path, message)
+                        except ValueError as e:
+                            st.error(str(e))
+                            return
+                        except Exception as e:
+                            st.error(f"Error during embedding: {e}")
+                            return
+                    elif video_mode == "Audio track only":
+                        if not has_ffmpeg():
+                            st.error("Video steganography requires ffmpeg, which was not found on this system. Please install ffmpeg or use audio-only files.")
+                            return
+                        st.info("Embedding into AUDIO TRACK only.")
+                        try:
+                            embed_video_audio_only(temp_path, stego_path, message)
+                        except ValueError as e:
+                            st.error(str(e))
+                            return
+                        except Exception as e:
+                            st.error(f"Error during embedding: {e}")
+                            return
+                    else:  # both
+                        if not has_ffmpeg():
+                            st.error("Video steganography requires ffmpeg, which was not found on this system. Please install ffmpeg or use audio-only files.")
+                            return
+                        st.info("Embedding into BOTH video frames and audio track.")
+                        use_same_msg = st.session_state.get("use_same_message_checkbox", True)
+                        try:
+                            if use_same_msg:
+                                embed_video_both(temp_path, stego_path, message, message)
+                            else:
+                                embed_video_both(temp_path, stego_path, msg_video, msg_audio)
+                        except ValueError as e:
+                            st.error(str(e))
+                            return
+                        except Exception as e:
+                            st.error(f"Error during embedding: {e}")
+                            return
+                else:
+                    st.error("Unsupported file type.")
                     return
-                except Exception as e:
-                    st.error(f"Error during embedding: {e}")
-                    return
-            elif kind == "video":
-                if video_mode == "Video frames only":
-                    st.info("Embedding into VIDEO FRAMES only.")
-                    try:
-                        embed_video_frames_only(temp_path, stego_path, message)
-                    except ValueError as e:
-                        st.error(str(e))
-                        return
-                    except Exception as e:
-                        st.error(f"Error during embedding: {e}")
-                        return
-                elif video_mode == "Audio track only":
-                    st.info("Embedding into AUDIO TRACK only.")
-                    try:
-                        embed_video_audio_only(temp_path, stego_path, message)
-                    except ValueError as e:
-                        st.error(str(e))
-                        return
-                    except Exception as e:
-                        st.error(f"Error during embedding: {e}")
-                        return
-                else:  # both
-                    st.info("Embedding into BOTH video frames and audio track.")
-                    use_same_msg = st.session_state.get("use_same_message_checkbox", True)
-                    try:
-                        if use_same_msg:
-                            embed_video_both(temp_path, stego_path, message, message)
-                        else:
-                            embed_video_both(temp_path, stego_path, msg_video, msg_audio)
-                    except ValueError as e:
-                        st.error(str(e))
-                        return
-                    except Exception as e:
-                        st.error(f"Error during embedding: {e}")
-                        return
-            else:
-                st.error("Unsupported file type.")
-                return
 
             st.success("Message embedded successfully.")
             # Small visual feedback for the user
@@ -643,11 +690,12 @@ def show_embed_tab():
             download_name = f"{base_stem}_stego{out_ext}"
             with open(stego_path, "rb") as f:
                 stego_bytes = f.read()
-            st.download_button(
-                label="Download stego file",
-                data=stego_bytes,
-                file_name=download_name,
-            )
+            
+            # Store in session state for persistent download
+            st.session_state["stego_bytes"] = stego_bytes
+            st.session_state["stego_filename"] = download_name
+            st.session_state["has_stego"] = True
+
         except Exception as e:
             st.error(f"Error during embedding: {e}")
         finally:
@@ -656,6 +704,21 @@ def show_embed_tab():
                     os.remove(p)
                 except OSError:
                     pass
+
+    # Persistent download section
+    if st.session_state.get("has_stego") and st.session_state.get("stego_bytes") is not None:
+        st.info(
+            "Click **Download stego file** below. "
+            "If your browser does not start downloading within a few seconds, "
+            "click the button again."
+        )
+        st.download_button(
+            label="Download stego file",
+            data=st.session_state["stego_bytes"],
+            file_name=st.session_state.get("stego_filename", "stego_output"),
+            key="download_stego_button",
+            use_container_width=True,
+        )
 
 
 def show_extract_tab():
@@ -671,7 +734,7 @@ def show_extract_tab():
         key="file_extract",
     )
     if uploaded is not None:
-        update_shared_file(uploaded)
+        update_shared_file(uploaded, max_bytes=MAX_EXTRACT_FILE_BYTES)
 
     show_shared_file_info()
 
@@ -710,6 +773,9 @@ def show_extract_tab():
                     mode_label = video_mode
 
                 if mode_label.startswith("Auto"):
+                    if not has_ffmpeg():
+                        st.error("Video steganography requires ffmpeg, which was not found on this system. Please install ffmpeg or use audio-only files.")
+                        return
                     msg_frames = extract_lsb_video(temp_path)
                     msg_audio = extract_message_from_video_audio(temp_path)
                     st.subheader("Recovered from VIDEO FRAMES")
@@ -717,10 +783,16 @@ def show_extract_tab():
                     st.subheader("Recovered from AUDIO TRACK")
                     st.code(msg_audio or "", language="text")
                 elif mode_label.startswith("Video frames"):
+                    if not has_ffmpeg():
+                        st.error("Video steganography requires ffmpeg, which was not found on this system. Please install ffmpeg or use audio-only files.")
+                        return
                     msg_frames = extract_lsb_video(temp_path)
                     st.subheader("Recovered from VIDEO FRAMES")
                     st.code(msg_frames or "", language="text")
                 else:  # audio track only
+                    if not has_ffmpeg():
+                        st.error("Video steganography requires ffmpeg, which was not found on this system. Please install ffmpeg or use audio-only files.")
+                        return
                     msg_audio = extract_message_from_video_audio(temp_path)
                     st.subheader("Recovered from AUDIO TRACK")
                     st.code(msg_audio or "", language="text")
@@ -742,6 +814,16 @@ def show_main_app():
         "Use this dashboard to **analyze**, **embed**, and **extract** hidden messages "
         "from audio and video files. Choose a tab below to get started."
     )
+    st.info(
+        "Note: The online Streamlit demo may be slower or have stricter limits on file size. "
+        "For the best performance and to test very large files, you can run the local "
+        "StegDetector executable on your own machine."
+    )
+    if not has_ffmpeg():
+        st.warning(
+            "ffmpeg was not detected on this system. Video-related embedding and extraction may fail. "
+            "Audio-only steganography will still work. For full functionality, please install ffmpeg and add it to your PATH."
+        )
     st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
 
     user = st.session_state.get("logged_in_user") or "Unknown user"
@@ -759,6 +841,11 @@ def show_main_app():
         st.markdown("---")
         st.markdown(f"**Logged in as:** `{user}`")
 
+        # Reset session: clear shared file and stego-related state (not authentication)
+        if st.button("♻ Reset session", key="reset_session_button"):
+            reset_app_state()
+            st.rerun()
+
         # Separate, more "danger-looking" log out
         if st.button("❌ Log out", key="logout_button"):
             st.session_state["logged_in_user"] = None
@@ -770,7 +857,8 @@ def show_main_app():
                 "- **Analyze**: upload a cover or stego file to check for hidden content.\n"
                 "- **Embed**: hide a secret message in audio or video using LSB.\n"
                 "- **Extract**: recover hidden messages from audio/video stego files.\n"
-                "- The same uploaded file is shared across all tabs."
+                "- The same uploaded file is shared across all tabs.\n"
+                "- If the online demo feels slow or limited, use the local executable version."
             )
 
     # ----- MAIN TABS -----

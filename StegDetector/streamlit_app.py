@@ -903,6 +903,24 @@ def show_main_app():
 
 def main():
     st.set_page_config(page_title="StegDetector", layout="wide")
+    
+    # Basic anti-automation / anti-crawler guard
+    st.markdown(
+        """
+        <script>
+        try {
+          // Blocks many automated browsers (Selenium, Puppeteer, etc.)
+          if (navigator.webdriver === true) {
+            document.body.innerHTML = "<h3 style='text-align:center;margin-top:2rem;'>Access denied</h3>";
+          }
+        } catch (e) {
+          // Fail silently for older browsers
+        }
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+    
     inject_global_styles()
     inject_global_css()
     init_db()

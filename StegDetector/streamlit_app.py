@@ -31,13 +31,15 @@ st.markdown(
     """
     <style>
     /* Soften the Quick help expander */
-    div[data-testid="stExpander"] {
-        border-radius: 12px !important;
-        border: 1px solid #e5e7eb !important;
-        background-color: #fafafa !important;
-    }
-    div[data-testid="stExpander"] > details {
-        padding: 0.25rem 0.75rem !important;
+    @media (prefers-color-scheme: light) {
+        div[data-testid="stExpander"] {
+            border-radius: 12px !important;
+            border: 1px solid #e5e7eb !important;
+            background-color: #fafafa !important;
+        }
+        div[data-testid="stExpander"] > details {
+            padding: 0.25rem 0.75rem !important;
+        }
     }
     </style>
     """,
@@ -76,22 +78,24 @@ def reset_app_state() -> None:
             st.session_state.pop(key, None)
 
 def inject_global_css():
-    """Inject custom CSS for a polished look."""
+    """Inject custom CSS for a polished look (light mode only)."""
     st.markdown(
         """
         <style>
-        .stApp {
-            background-color: #f5f7fb;
-        }
-        [data-testid="stSidebar"] {
-            background-color: #ffffff;
-            border-right: 1px solid #e5e7eb;
-        }
-        section.main > div {
-            padding-top: 1rem;
-        }
-        .stButton > button {
-            border-radius: 999px;
+        @media (prefers-color-scheme: light) {
+            .stApp {
+                background-color: #f5f7fb;
+            }
+            [data-testid="stSidebar"] {
+                background-color: #ffffff;
+                border-right: 1px solid #e5e7eb;
+            }
+            section.main > div {
+                padding-top: 1rem;
+            }
+            .stButton > button {
+                border-radius: 999px;
+            }
         }
         </style>
         """,
@@ -100,33 +104,35 @@ def inject_global_css():
 
 
 def inject_global_styles():
-    """Make text areas more visible with stronger borders and subtle background."""
+    """Make text areas more visible with stronger borders and subtle background (light mode only)."""
     st.markdown(
         """
         <style>
-        /* All multi-line text areas */
-        .stTextArea textarea {
-            border: 2px solid #2563eb !important;   /* blue border */
-            border-radius: 8px !important;
-            background-color: #f9fafb !important;   /* very light gray */
-            font-size: 0.95rem !important;
-        }
+        @media (prefers-color-scheme: light) {
+            /* All multi-line text areas */
+            .stTextArea textarea {
+                border: 2px solid #2563eb !important;   /* blue border */
+                border-radius: 8px !important;
+                background-color: #f9fafb !important;   /* very light gray */
+                font-size: 0.95rem !important;
+            }
 
-        /* Labels above text areas */
-        .stTextArea label {
-            font-weight: 600 !important;
-        }
+            /* Labels above text areas */
+            .stTextArea label {
+                font-weight: 600 !important;
+            }
 
-        /* Code blocks for recovered messages */
-        [data-testid="stCodeBlock"] {
-            border: 2px solid #2563eb !important;
-            border-radius: 8px !important;
-            background-color: #f9fafb !important;
-            padding: 0.5rem 0.75rem !important;
-        }
-        [data-testid="stCodeBlock"] pre {
-            color: #111827 !important;
-            font-size: 0.95rem !important;
+            /* Code blocks for recovered messages */
+            [data-testid="stCodeBlock"] {
+                border: 2px solid #2563eb !important;
+                border-radius: 8px !important;
+                background-color: #f9fafb !important;
+                padding: 0.5rem 0.75rem !important;
+            }
+            [data-testid="stCodeBlock"] pre {
+                color: #111827 !important;
+                font-size: 0.95rem !important;
+            }
         }
         </style>
         """,

@@ -477,6 +477,20 @@ def show_embed_tab():
         "steganography. You can later test it with the **Analyze** and **Extract** tabs."
     )
 
+    st.info(
+        "Performance tip (online demo):\n\n"
+        "- Embedding in **audio only** or **video frames only** usually keeps file sizes moderate.\n"
+        "- A **video without audio** also behaves normally after embedding.\n"
+        "- The heaviest case is a **video with audio where both streams carry hidden data**; "
+        "these stego files can become much larger and may take longer for Streamlit to prepare "
+        "and start downloading.\n\n"
+        "For smoother use on the website, prefer very short, low-resolution clips "
+        "(for example a few seconds at 240p), or a single stream (audio-only or video-only). "
+        "The three sample files provided with our Moodle submission cover the main use cases "
+        "and are convenient for testing the web app. For larger or higher-quality videos, "
+        "it is more practical to run the local StegDetector executable instead of the online demo."
+    )
+
     uploaded = st.file_uploader(
         "Upload or replace a COVER file (audio or video)",
         type=["wav", "mp3", "flac", "ogg", "m4a", "mp4", "avi", "mkv", "mov", "flv"],
@@ -858,7 +872,8 @@ def show_main_app():
                 "- **Embed**: hide a secret message in audio or video using LSB.\n"
                 "- **Extract**: recover hidden messages from audio/video stego files.\n"
                 "- The same uploaded file is shared across all tabs.\n"
-                "- If the online demo feels slow or limited, use the local executable version."
+                "- If the online demo feels slow or limited, use the local executable version.\n"
+                "- Double embedding (video frames + audio track) produces the largest stego files and may be slower on the online demo."
             )
 
     # ----- MAIN TABS -----

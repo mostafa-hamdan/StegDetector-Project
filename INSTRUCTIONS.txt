@@ -1,0 +1,119 @@
+================================================================================
+                         STEGDETECTOR - SETUP & USE
+================================================================================
+
+WHAT IS THIS?
+=============
+StegDetector is a web application for hiding and detecting secret messages 
+in audio and video files using steganography.
+
+SYSTEM REQUIREMENTS:
+====================
+- Windows PC (7 or newer)
+- At least 4GB RAM
+- ~2GB free disk space
+
+FIRST TIME SETUP (Do this once):
+================================
+1. Open the StegDetector folder
+2. Find the file "setup.bat"
+3. Double-click it
+4. A terminal window will open - let it run
+5. It will download and install everything needed
+6. This takes 5-10 minutes (depends on internet speed)
+7. Press Enter when you see "Setup complete"
+
+STARTING THE APP (Every time you use it):
+==========================================
+1. Double-click "run_stegdetector.bat"
+2. Wait for your web browser to open automatically
+3. You'll see the login page
+4. Create a username and password, or login if you already have one
+
+USING THE APP:
+==============
+
+LOGIN:
+------
+- First time: Click "Sign Up" and create an account
+  (Password needs: uppercase, lowercase, number, special character - min 8 chars)
+- You'll be logged in automatically after signup
+- Next time: Use "Log In" with your credentials
+
+THREE MAIN TABS:
+
+1. ANALYZE (Check if file has hidden messages)
+   - Upload an audio or video file
+   - Click "Run analysis"
+   - Get result: "Contains steganography" or "Normal file"
+
+2. EMBED (Hide a message in a file)
+   - Upload a cover file (audio or video)
+   - Type your secret message
+   - Click "Embed message"
+   - Download the stego file (your file with hidden message)
+
+3. EXTRACT (Recover hidden messages)
+   - Upload a stego file (file with hidden message)
+   - Click "Extract message"
+   - Read the recovered secret message
+
+SUPPORTED FILE FORMATS:
+=======================
+Audio: WAV, MP3, FLAC, OGG, M4A
+Video: MP4, AVI, MKV, MOV, FLV
+
+STOPPING THE APP:
+=================
+- Close the terminal window, OR
+- Press Ctrl+C in the terminal
+
+TROUBLESHOOTING:
+================
+If something doesn't work:
+1. Double-click "troubleshoot.bat"
+2. Choose option from the menu
+3. Follow the recommendations
+
+Common issues:
+- "Python not found" → Install Python 3.10+ and restart computer
+- "ffmpeg not found" → Install ffmpeg and restart computer
+- App won't start → Run troubleshoot.bat, choose option 5
+
+FILES YOU'LL SEE:
+=================
+- setup.bat → Run once to install everything
+- run_stegdetector.bat → Run every time to start the app
+- troubleshoot.bat → Run if you have problems
+- StegDetector folder → The application code (don't modify)
+- models folder → The AI models (don't modify)
+- venv folder → Created by setup.bat (system files, don't touch)
+
+WHAT NOT TO DELETE:
+===================
+- Don't delete: venv folder, models folder, StegDetector folder
+- Safe to delete: venv folder only if you want to run setup.bat again
+
+TIPS:
+=====
+- Video files with messages will be larger (lossless encoding)
+- Larger files take longer to process
+- You can upload a file once and use it across all tabs
+- Click "Clear file" to upload a new file
+
+QUESTIONS?
+==========
+Read these files for more details:
+- PROJECT_DOCUMENTATION.md → Technical details about the system
+- README_BATCH_FILES.md → Detailed batch file information
+
+================================================================================
+                              QUICK SUMMARY
+================================================================================
+
+FIRST TIME: Double-click setup.bat (wait 5-10 min) → Press Enter
+EVERY TIME: Double-click run_stegdetector.bat → Browser opens → You're ready
+
+That's it! No command line needed.
+
+================================================================================

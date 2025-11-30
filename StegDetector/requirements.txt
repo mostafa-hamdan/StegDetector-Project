@@ -1,0 +1,11 @@
+PyQt5
+numpy
+scipy
+librosa
+scikit-learn
+joblib
+opencv-python
+moviepy
+soundfile
+streamlit
+bcrypt

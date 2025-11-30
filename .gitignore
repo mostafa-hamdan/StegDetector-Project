@@ -1,0 +1,24 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+temp/
+StegDetector/temp/
+
+# local DB (usually don't want in git)
+*.db
+*.sqlite
+*.sqlite3
+
+# big datasets / generated outputs
+data/
+StegDetector/data/
+demo_data/
+StegDetector/demo_data/
+training/
+StegDetector/training/
+*.mkv
+*.mp4
+*.avi
+*.mov

@@ -1,0 +1,576 @@
+# streamlit_app.py
+from __future__ import annotations
+
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Optional, Tuple
+
+import streamlit as st
+
+from auth_db import init_db, create_user, verify_user
+from core.audio_detector import analyze_audio
+from core.video_detector import analyze_video
+from core.stego_audio import embed_lsb_audio, extract_lsb_audio
+from core.stego_video import embed_lsb_video, extract_lsb_video
+from core.utils_av import extract_audio_from_video, ensure_dir
+
+
+# ---------- FILE TYPE HELPERS ----------
+
+def classify_file_type(filename: str) -> Tuple[Optional[str], str]:
+    """
+    Decide whether a file should be treated as audio or video based on its extension.
+
+    Returns:
+        (kind, suffix)
+        kind in {"audio", "video", None}
+    """
+    suffix = Path(filename).suffix.lower()
+    audio_exts = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
+    video_exts = {".mp4", ".avi", ".mkv", ".mov", ".flv"}
+
+    if suffix in audio_exts:
+        return "audio", suffix
+    if suffix in video_exts:
+        return "video", suffix
+    return None, suffix
+
+
+# ---------- SHARED FILE STATE (PERSIST ACROSS TABS) ----------
+
+def init_app_state():
+    if "logged_in_user" not in st.session_state:
+        st.session_state["logged_in_user"] = None
+
+    # Shared uploaded file for all tabs
+    defaults = {
+        "shared_file_bytes": None,
+        "shared_file_name": None,
+        "shared_file_kind": None,   # "audio" or "video"
+        "shared_file_suffix": None,
+    }
+    for k, v in defaults.items():
+        st.session_state.setdefault(k, v)
+
+
+def update_shared_file(uploaded_file) -> None:
+    """
+    Store the uploaded file (bytes + metadata) in session_state so that
+    all tabs can reuse it.
+    """
+    if uploaded_file is None:
+        return
+
+    kind, suffix = classify_file_type(uploaded_file.name)
+    if kind is None:
+        st.error(
+            f"Unsupported file type: {suffix}. "
+            "Please upload audio (wav/mp3/flac/ogg/m4a) or video (mp4/avi/mkv/mov/flv)."
+        )
+        return
+
+    st.session_state["shared_file_bytes"] = uploaded_file.getvalue()
+    st.session_state["shared_file_name"] = uploaded_file.name
+    st.session_state["shared_file_kind"] = kind
+    st.session_state["shared_file_suffix"] = suffix
+
+
+def has_shared_file() -> bool:
+    return st.session_state.get("shared_file_bytes") is not None
+
+
+
+def make_temp_file_from_shared() -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Materialize the shared file bytes into a real temp file on disk.
+    Returns (temp_path, kind, suffix) or (None, None, None) if no file.
+    """
+    if not has_shared_file():
+        return None, None, None
+
+    data = st.session_state["shared_file_bytes"]
+    suffix = st.session_state["shared_file_suffix"]
+    kind = st.session_state["shared_file_kind"]
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(data)
+        temp_path = tmp.name
+
+    return temp_path, kind, suffix
+
+
+def show_shared_file_info():
+    name = st.session_state.get("shared_file_name")
+    kind = st.session_state.get("shared_file_kind")
+    if not name:
+        st.info("No file selected yet. Upload a file in any tab and it will be shared here.")
+        return
+    label = "Audio" if kind == "audio" else "Video" if kind == "video" else "Unknown"
+    st.success(
+        f"Current shared file: **{name}**  \n"
+        f"Type: **{label}**  \n"
+        "This file is reused across all tabs."
+    )
+
+
+# ---------- VIDEO AUDIO-TRACK HELPERS ----------
+
+def _mux_video_and_audio(video_path: Path | str, audio_path: Path | str, output_path: Path | str) -> Path:
+    """
+    Use ffmpeg to combine a video stream and an audio stream into a single file.
+
+    - Video is copied (no re-encode) so VIDEO LSB stego survives.
+    - Audio is stored lossless so AUDIO LSB stego survives.
+    """
+    from shutil import which
+
+    video_path = str(video_path)
+    audio_path = str(audio_path)
+    output_path = str(output_path)
+
+    if which("ffmpeg") is None:
+        raise RuntimeError(
+            "ffmpeg is required to mux video and audio but was not found in PATH."
+        )
+
+    # Use FLAC for lossless audio in MP4, or use MKV with PCM for maximum compatibility
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", video_path,
+        "-i", audio_path,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "copy",        # keep video codec as-is
+        "-c:a", "flac",        # lossless FLAC codec preserves LSBs
+        "-shortest",           # use shortest stream to avoid sync issues
+        "-fflags", "+bitexact", # preserve exact bitstream
+        output_path,
+    ]
+
+    proc = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "ffmpeg failed while combining video and audio.\n\n"
+            f"Command: {' '.join(cmd)}\n\n"
+            f"Error:\n{proc.stderr}"
+        )
+
+    return Path(output_path)
+
+
+def embed_video_frames_only(cover_path: str, stego_path: str, message: str) -> None:
+    """
+    Standard VIDEO-only stego: message in the LSBs of video frames, no audio track.
+    """
+    embed_lsb_video(cover_path, stego_path, message)
+
+
+def embed_video_audio_only(cover_path: str, stego_path: str, message: str) -> None:
+    """
+    Only modifies the AUDIO track of the given video; frames are kept as-is.
+
+    Output: single video+audio file with stego audio in PCM format.
+    """
+    temp_dir = Path(tempfile.gettempdir()) / "stegdetector_tmp"
+    ensure_dir(str(temp_dir))
+    src_audio = temp_dir / "cover_audio.wav"
+    stego_audio = temp_dir / "cover_audio_stego.wav"
+
+    try:
+        extract_audio_from_video(str(cover_path), str(src_audio))
+    except Exception as e:
+        raise RuntimeError("This video has no audio track to hide a message in.") from e
+
+    embed_lsb_audio(str(src_audio), str(stego_audio), message)
+    _mux_video_and_audio(cover_path, stego_audio, stego_path)
+
+
+def embed_video_both(cover_path: str, stego_path: str, msg_video: str, msg_audio: str) -> None:
+    """
+    Embed one message in VIDEO frames + another in AUDIO track,
+    and output ONE video file containing both.
+    """
+    temp_dir = Path(tempfile.gettempdir()) / "stegdetector_tmp"
+    ensure_dir(str(temp_dir))
+
+    # 1) embed into video frames (lossless PNG codec in AVI)
+    stego_video_path = temp_dir / "cover_video_stego.avi"
+    embed_lsb_video(str(cover_path), str(stego_video_path), msg_video)
+
+    # 2) extract original audio and embed msg_audio
+    src_audio = temp_dir / "cover_audio.wav"
+    stego_audio = temp_dir / "cover_audio_stego.wav"
+
+    try:
+        extract_audio_from_video(str(cover_path), str(src_audio))
+    except Exception as e:
+        raise RuntimeError(
+            "Cover video has no audio track – cannot embed into both video and audio."
+        ) from e
+
+    embed_lsb_audio(str(src_audio), str(stego_audio), msg_audio)
+
+    # 3) mux stego video + stego audio into a single MKV WITHOUT re-encoding video
+    _mux_video_and_audio(stego_video_path, stego_audio, stego_path)
+
+
+def extract_message_from_video_audio(video_path: str) -> str:
+    """
+    Extract LSB text message from the AUDIO TRACK of a video, if present.
+    """
+    temp_dir = Path(tempfile.gettempdir()) / "stegdetector_tmp"
+    ensure_dir(str(temp_dir))
+    src_audio = temp_dir / "extract_audio.wav"
+
+    try:
+        extract_audio_from_video(str(video_path), str(src_audio))
+    except Exception:
+        return "[No audio track found or failed to extract audio from this video]"
+
+    msg = extract_lsb_audio(str(src_audio))
+    return msg
+
+
+# ---------- AUTH SCREENS ----------
+
+def show_auth_page():
+    st.title("StegDetector – Login / Sign Up")
+
+    tab_login, tab_signup = st.tabs(["Login", "Sign Up"])
+
+    # --- LOGIN TAB ---
+    with tab_login:
+        st.subheader("Login")
+        login_username = st.text_input("Username", key="login_username")
+        login_password = st.text_input("Password", type="password", key="login_password")
+
+        if st.button("Log in"):
+            if not login_username or not login_password:
+                st.error("Please enter both username and password.")
+            else:
+                if verify_user(login_username, login_password):
+                    st.session_state["logged_in_user"] = login_username
+                    st.success(f"Logged in as {login_username}")
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password.")
+
+    # --- SIGNUP TAB ---
+    with tab_signup:
+        st.subheader("Create a new account")
+        signup_username = st.text_input("Username", key="signup_username")
+        signup_password = st.text_input("Password (Min 8 characters, at least 1 uppercase, 1 lowercase, 1 number, 1 special character)", type="password", key="signup_password")
+        signup_password2 = st.text_input("Confirm Password", type="password", key="signup_password2")
+
+        if st.button("Sign up"):
+            if not signup_username or not signup_password or not signup_password2:
+                st.error("Please fill all fields.")
+            elif signup_password != signup_password2:
+                st.error("Passwords do not match.")
+            else:
+                success, msg = create_user(signup_username, signup_password)
+                if success:
+                    st.success(msg)
+                    # Auto-login after successful sign-up
+                    st.session_state["logged_in_user"] = signup_username
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+
+# ---------- MAIN APP (AFTER LOGIN) ----------
+
+def show_analyze_tab():
+    st.header("Analyze File for Steganography")
+
+    show_shared_file_info()
+
+    uploaded = st.file_uploader(
+        "Upload or replace an audio/video file to analyze",
+        type=["wav", "mp3", "flac", "ogg", "m4a", "mp4", "avi", "mkv", "mov", "flv"],
+        key="file_analyze",
+    )
+    if uploaded is not None:
+        update_shared_file(uploaded)
+
+    if st.button("Run analysis"):
+        if not has_shared_file():
+            st.error("Please upload an audio or video file first.")
+            return
+
+        temp_path, kind, _ = make_temp_file_from_shared()
+        if temp_path is None:
+            st.error("Internal error: shared file missing.")
+            return
+
+        try:
+            if kind == "audio":
+                st.info("Detected: **Audio file** – running audio steganalysis.")
+                result = analyze_audio(temp_path)
+            elif kind == "video":
+                st.info("Detected: **Video file** – running video steganalysis on frames.")
+                result = analyze_video(temp_path)
+            else:
+                st.error("Unsupported file type.")
+                return
+
+            st.subheader("Analysis Result")
+            st.json(result)
+        except Exception as e:
+            st.error(f"Error during analysis: {e}")
+        finally:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+
+def show_embed_tab():
+    st.header("Embed a Secret Message")
+
+    show_shared_file_info()
+
+    uploaded = st.file_uploader(
+        "Upload or replace a COVER file (audio or video)",
+        type=["wav", "mp3", "flac", "ogg", "m4a", "mp4", "avi", "mkv", "mov", "flv"],
+        key="file_embed",
+    )
+    if uploaded is not None:
+        update_shared_file(uploaded)
+
+    kind = st.session_state.get("shared_file_kind")
+
+    if not has_shared_file():
+        st.info("Upload a cover file above to enable embedding.")
+        return
+
+    video_mode = None
+    if kind == "video":
+        video_mode = st.radio(
+            "For video covers: where to hide the message?",
+            ["Video frames only", "Audio track only", "Both frames + audio"],
+            key="embed_video_mode",
+        )
+
+    # Handle message input based on video mode
+    message = None
+    msg_video = None
+    msg_audio = None
+
+    if kind == "audio" or video_mode == "Video frames only" or video_mode == "Audio track only":
+        # Single message for audio or single video/audio mode
+        message = st.text_area("Secret message to hide")
+    elif video_mode == "Both frames + audio":
+        # Two message mode with option to use same message
+        use_same_message = st.checkbox("Use the same message for both video and audio frames", value=True, key="use_same_message_checkbox")
+        
+        if use_same_message:
+            message = st.text_area("Secret message to hide (for both video frames and audio track)")
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                msg_video = st.text_area("Secret message to hide in VIDEO FRAMES")
+            with col2:
+                msg_audio = st.text_area("Secret message to hide in AUDIO TRACK")
+
+    if st.button("Embed message"):
+        # Validate messages
+        if kind == "audio" or video_mode in ["Video frames only", "Audio track only"]:
+            if not message:
+                st.error("Please enter a message to hide.")
+                return
+        elif video_mode == "Both frames + audio":
+            use_same_message = st.session_state.get("embed_both_same_message", st.session_state.get("use_same_message_checkbox", True))
+            if use_same_message:
+                if not message:
+                    st.error("Please enter a message to hide.")
+                    return
+            else:
+                if not msg_video or msg_video.strip() == "":
+                    st.error("Please enter a message for video frames.")
+                    return
+                if not msg_audio or msg_audio.strip() == "":
+                    st.error("Please enter a message for audio track.")
+                    return
+
+        temp_path, kind, suffix = make_temp_file_from_shared()
+        if temp_path is None:
+            st.error("Internal error: shared file missing.")
+            return
+
+        # Decide output extension + friendly download name
+        original_name = st.session_state.get("shared_file_name") or "cover"
+        base_stem = Path(original_name).stem
+
+        if kind == "audio":
+            out_ext = suffix  # keep same extension
+        else:  # video
+            if video_mode is None:
+                st.error("Please choose where to embed inside the video.")
+                return
+            if video_mode == "Video frames only":
+                out_ext = ".mkv"
+            elif video_mode == "Audio track only":
+                out_ext = ".mkv"
+            else:
+                out_ext = ".mkv"
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=out_ext) as tmp:
+            stego_path = tmp.name
+
+        try:
+            if kind == "audio":
+                st.info("Embedding into AUDIO samples")
+                embed_lsb_audio(temp_path, stego_path, message)
+            elif kind == "video":
+                if video_mode == "Video frames only":
+                    st.info("Embedding into VIDEO FRAMES only.")
+                    embed_video_frames_only(temp_path, stego_path, message)
+                elif video_mode == "Audio track only":
+                    st.info("Embedding into AUDIO TRACK only.")
+                    embed_video_audio_only(temp_path, stego_path, message)
+                else:  # both
+                    st.info("Embedding into BOTH video frames and audio track.")
+                    use_same_msg = st.session_state.get("use_same_message_checkbox", True)
+                    if use_same_msg:
+                        embed_video_both(temp_path, stego_path, message, message)
+                    else:
+                        embed_video_both(temp_path, stego_path, msg_video, msg_audio)
+            else:
+                st.error("Unsupported file type.")
+                return
+
+            st.success("Message embedded successfully.")
+            download_name = f"{base_stem}_stego{out_ext}"
+            with open(stego_path, "rb") as f:
+                stego_bytes = f.read()
+            st.download_button(
+                label="Download stego file",
+                data=stego_bytes,
+                file_name=download_name,
+            )
+        except Exception as e:
+            st.error(f"Error during embedding: {e}")
+        finally:
+            for p in (temp_path, stego_path):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+
+
+def show_extract_tab():
+    st.header("Extract a Secret Message")
+
+    show_shared_file_info()
+
+    uploaded = st.file_uploader(
+        "Upload or replace a suspected STEGO file (audio or video)",
+        type=["wav", "mp3", "flac", "ogg", "m4a", "mp4", "avi", "mkv", "mov", "flv"],
+        key="file_extract",
+    )
+    if uploaded is not None:
+        update_shared_file(uploaded)
+
+    kind = st.session_state.get("shared_file_kind")
+
+    video_mode = None
+    if kind == "video":
+        video_mode = st.radio(
+            "For videos: where do you want to extract from?",
+            ["Auto (frames + audio track)", "Video frames only", "Audio track only"],
+            key="extract_video_mode",
+        )
+
+    if st.button("Extract message"):
+        if not has_shared_file():
+            st.error("Please upload a stego file first.")
+            return
+
+        temp_path, kind, _ = make_temp_file_from_shared()
+        if temp_path is None:
+            st.error("Internal error: shared file missing.")
+            return
+
+        try:
+            if kind == "audio":
+                st.info("Detected AUDIO file – extracting from audio samples.")
+                msg = extract_lsb_audio(temp_path)
+                st.subheader("Recovered message")
+                st.code(msg)
+            elif kind == "video":
+                st.info("Detected VIDEO file.")
+                # Default when None: auto
+                if video_mode is None:
+                    mode_label = "Auto (frames + audio track)"
+                else:
+                    mode_label = video_mode
+
+                if mode_label.startswith("Auto"):
+                    msg_frames = extract_lsb_video(temp_path)
+                    msg_audio = extract_message_from_video_audio(temp_path)
+                    st.subheader("Recovered from VIDEO FRAMES")
+                    st.code(msg_frames)
+                    st.subheader("Recovered from AUDIO TRACK")
+                    st.code(msg_audio)
+                elif mode_label.startswith("Video frames"):
+                    msg_frames = extract_lsb_video(temp_path)
+                    st.subheader("Recovered from VIDEO FRAMES")
+                    st.code(msg_frames)
+                else:  # audio track only
+                    msg_audio = extract_message_from_video_audio(temp_path)
+                    st.subheader("Recovered from AUDIO TRACK")
+                    st.code(msg_audio)
+            else:
+                st.error("Unsupported file type.")
+        except Exception as e:
+            st.error(f"Error during extraction: {e}")
+        finally:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+
+def show_main_app():
+    st.title("StegDetector – Dashboard")
+
+    user = st.session_state.get("logged_in_user")
+    st.sidebar.write(f"Logged in as: **{user}**")
+    if st.sidebar.button("Log out"):
+        st.session_state["logged_in_user"] = None
+        st.rerun()
+
+    tab_analyze, tab_embed, tab_extract = st.tabs(["Analyze", "Embed", "Extract"])
+
+    with tab_analyze:
+        show_analyze_tab()
+    with tab_embed:
+        show_embed_tab()
+    with tab_extract:
+        show_extract_tab()
+
+
+# ---------- ENTRYPOINT ----------
+
+def main():
+    st.set_page_config(page_title="StegDetector", layout="wide")
+    init_db()
+    init_app_state()
+
+    if st.session_state["logged_in_user"] is None:
+        show_auth_page()
+    else:
+        show_main_app()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,225 @@
+================================================================================
+                    STEGDETECTOR - PROJECT STRUCTURE
+================================================================================
+
+PROJECT ROOT:
+=============
+D:\crypto_new\StegDetector\
+
+================================================================================
+                         FILES IN ROOT DIRECTORY
+================================================================================
+
+setup.bat                          - Run this first to set up the project
+run_stegdetector.bat               - Run this to start the app
+troubleshoot.bat                   - Run if you have problems
+requirements.txt                   - List of Python packages needed
+INSTRUCTIONS.txt                   - Instructions for the doctor
+PROJECT_DOCUMENTATION.md           - Technical documentation
+PROJECT_STRUCTURE.txt              - This file
+
+================================================================================
+                        DIRECTORIES IN ROOT
+================================================================================
+
+StegDetector/                      - MAIN APPLICATION FOLDER
+├── streamlit_app.py              - Web app UI (the main interface)
+├── main.py                        - Alternative entry point
+├── auth_db.py                     - User authentication system
+│
+├── app/                           - GUI related code
+│   └── gui/
+│       └── main_window.py         - GUI window code
+│
+├── core/                          - CORE STEGANOGRAPHY MODULES
+│   ├── stego_audio.py             - Audio embedding/extraction
+│   ├── stego_video.py             - Video embedding/extraction
+│   ├── audio_detector.py          - Audio steganalysis (detect hidden messages)
+│   ├── video_detector.py          - Video steganalysis (detect hidden messages)
+│   ├── utils_av.py                - Utility functions for audio/video
+│   └── __init__.py
+│
+├── models/                        - PRE-TRAINED ML MODELS
+│   ├── audio_svm.joblib           - Audio detection SVM model
+│   ├── audio_scaler.joblib        - Audio feature scaler
+│   ├── video_svm.joblib           - Video detection SVM model
+│   └── video_scaler.joblib        - Video feature scaler
+│
+├── data/                          - TRAINING DATA (can be deleted to save space)
+│   ├── audio/
+│   │   ├── cover/                 - Original audio files for training
+│   │   └── stego/                 - Audio with hidden messages
+│   └── video/
+│       ├── cover/                 - Original videos for training
+│       └── stego/                 - Videos with hidden messages
+│
+├── demo_data/                     - DEMO FILES (can be deleted to save space)
+│   ├── audio/
+│   │   ├── cover/                 - Sample audio files
+│   │   └── stego/                 - Sample stego audio
+│   └── video/
+│       ├── cover/                 - Sample video files
+│       └── stego/                 - Sample stego videos
+│
+├── training/                      - TRAINING SCRIPTS (can be deleted)
+│   ├── train_audio_svm.py         - Train audio detection model
+│   ├── train_video_svm.py         - Train video detection model
+│   ├── generate_audio_stego.py    - Generate training stego audio
+│   ├── generate_video_stego.py    - Generate training stego videos
+│   ├── create_synthetic_audio_covers.py
+│   ├── create_synthetic_video_covers.py
+│   ├── create_demo_video_with_audio.py
+│   └── __init__.py
+│
+├── temp/                          - Temporary files (auto-generated)
+│
+├── .streamlit/
+│   └── config.toml                - Streamlit configuration
+│
+└── __pycache__/                   - Python cache files (auto-generated)
+
+venv/                              - VIRTUAL ENVIRONMENT (auto-created by setup.bat)
+                                     Contains all Python packages
+                                     Size: ~500MB
+                                     Safe to delete and recreate
+
+================================================================================
+                            KEY FOLDERS EXPLAINED
+================================================================================
+
+1. StegDetector/ (Main Application)
+   - Contains all application code
+   - streamlit_app.py = the web interface
+   - This is what the user sees and interacts with
+
+2. core/ (Heart of the Application)
+   - stego_audio.py = Hides messages in audio files
+   - stego_video.py = Hides messages in video files
+   - audio_detector.py = Detects if audio has hidden messages
+   - video_detector.py = Detects if video has hidden messages
+
+3. models/ (Machine Learning Models)
+   - Pre-trained SVM classifiers
+   - These detect steganographic content
+   - MUST KEEP: These make the detection feature work
+
+4. data/ (Training Datasets)
+   - Used to train the ML models
+   - CAN DELETE: Not needed for running the app
+   - Only needed if retraining models
+
+5. training/ (Model Training Scripts)
+   - Scripts that created the models in models/ folder
+   - CAN DELETE: Not needed for running the app
+   - Only needed if retraining models
+
+6. venv/ (Virtual Environment)
+   - Created by setup.bat
+   - Contains all Python packages
+   - Automatically created, can delete and recreate
+   - Size: ~500MB
+
+================================================================================
+                            WHAT TO KEEP
+================================================================================
+
+ESSENTIAL (Required to run):
+✓ StegDetector/ folder
+✓ core/ folder (inside StegDetector)
+✓ models/ folder (inside StegDetector)
+✓ streamlit_app.py
+✓ auth_db.py
+✓ requirements.txt
+✓ setup.bat
+✓ run_stegdetector.bat
+
+RECOMMENDED (Nice to have):
+✓ INSTRUCTIONS.txt
+✓ PROJECT_DOCUMENTATION.md
+✓ troubleshoot.bat
+✓ demo_data/ folder (for testing)
+
+CAN DELETE (Not needed):
+- data/ folder (training data)
+- training/ folder (training scripts)
+- venv/ folder (will be recreated by setup.bat)
+- __pycache__/ folders (will be recreated automatically)
+
+================================================================================
+                        FILE SIZE BREAKDOWN
+================================================================================
+
+Core Application:      ~10 MB
+Models (joblib files): ~100 MB
+Data (audio/video):    ~2-3 GB (optional, can delete)
+venv (virtual env):    ~500 MB (auto-created by setup.bat)
+
+Total (with everything): ~3 GB
+Total (without data):    ~700 MB (recommended for sharing)
+
+================================================================================
+                        EXECUTION FLOW
+================================================================================
+
+1. User runs setup.bat
+   → Creates venv/ folder
+   → Installs packages from requirements.txt into venv/
+
+2. User runs run_stegdetector.bat
+   → Activates venv/
+   → Runs: python -m streamlit run StegDetector/streamlit_app.py
+   → Opens browser to http://localhost:8501
+   → User sees streamlit_app.py UI
+
+3. User uploads file (in Streamlit app)
+   → Calls functions from core/stego_audio.py or core/stego_video.py
+   → Uses pre-trained models from models/ folder
+   → Shows results to user
+
+================================================================================
+                        PYTHON PACKAGE IMPORTS
+================================================================================
+
+Core imports used:
+
+numpy, scipy                  - Numerical computing
+librosa                       - Audio feature extraction
+scikit-learn                  - Machine learning (SVM classifier)
+joblib                        - Load pre-trained models
+opencv-python                 - Image/video processing
+soundfile                      - Read/write audio files
+streamlit                      - Web framework
+bcrypt                        - Password hashing
+
+All installed from requirements.txt by setup.bat
+
+================================================================================
+                        HOW TO SHARE
+================================================================================
+
+Include:
+- setup.bat
+- run_stegdetector.bat
+- troubleshoot.bat (optional)
+- INSTRUCTIONS.txt
+- PROJECT_DOCUMENTATION.md
+- requirements.txt
+- StegDetector/ folder (entire folder)
+- models/ folder (inside StegDetector)
+- core/ folder (inside StegDetector)
+- demo_data/ folder (optional, for testing)
+
+Exclude:
+- venv/ folder (will be created by setup.bat)
+- data/ folder (training data, optional)
+- training/ folder (training scripts, optional)
+- __pycache__/ folders
+- .git folder (if shared)
+
+Recipient then:
+1. Downloads all files
+2. Runs setup.bat
+3. Runs run_stegdetector.bat
+4. App works!
+
+================================================================================

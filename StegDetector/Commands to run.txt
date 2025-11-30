@@ -1,0 +1,8 @@
+To activate venv:
+venv\Scripts\activate
+
+
+To run the application:
+python main.py
+
+
